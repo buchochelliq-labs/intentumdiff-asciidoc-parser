@@ -541,7 +541,7 @@ intentumdiff git main
             Some(5 + "Révisions".len() as u64)
         );
         let equals: serde_json::Value =
-            serde_json::from_str(&parse_asciidoc("== =\\n")).unwrap();
+            serde_json::from_str(&parse_asciidoc("== =\n")).unwrap();
         assert_eq!(equals["children"][0]["label"], "=");
         assert_eq!(equals["children"][0]["position"]["start_col"], 3);
         assert_eq!(equals["children"][0]["position"]["end_col"], 4);
