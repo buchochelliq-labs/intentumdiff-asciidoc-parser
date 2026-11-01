@@ -102,7 +102,12 @@ fn parse_asciidoc(source: &str) -> String {
             continue;
         }
 
-        if let Some(parsed) = top_level_node(&format!("0.{}", children.len()), trimmed, line) {
+        if let Some(parsed) = top_level_node(
+            &format!("0.{}", children.len()),
+            trimmed,
+            line,
+            (raw.len() - raw.trim_start().len()) as u32,
+        ) {
             children.push(parsed);
         }
     }
@@ -149,14 +154,19 @@ fn block_start(line: &str) -> Option<(&'static str, &'static str, String)> {
     }
 }
 
-fn top_level_node(id: &str, line: &str, line_no: u32) -> Option<SemanticNode> {
+fn top_level_node(id: &str, line: &str, line_no: u32, source_col: u32) -> Option<SemanticNode> {
     if let Some((level, title)) = section_title(line) {
+        // Semantic title labels must start at the actual source title, not
+        // at the '=' heading marker. UTF-8 byte columns include indentation
+        // and the whole multi-byte title (#4).
+        let title_col = source_col + level as u32
+            + line[level..].find(title.as_str()).unwrap_or(1) as u32;
         return Some(node(
             id,
             &format!("section_level_{level}"),
             &title,
             line_no,
-            0,
+            title_col,
             &inline_children(id, line, line_no),
         ));
     }
@@ -511,4 +521,39 @@ intentumdiff git main
         assert!(links.contains(&"https://example.com/docs".to_string()));
         assert!(xrefs.contains(&"usage".to_string()));
     }
+
+    #[test]
+    fn section_titles_use_actual_utf8_source_byte_extents() {
+        // The former parser used col=0 and label.len(), yielding e.g. the
+        // source slice "== Overv" for a node labelled "Overview".
+        // Leading indentation and multibyte letters must also be counted.
+        let source = "  == Révisions  \n= Service Guide\n";
+        let parsed: serde_json::Value =
+            serde_json::from_str(&parse_asciidoc(source)).unwrap();
+        let sections = parsed["children"].as_array().unwrap();
+        assert_eq!(sections.len(), 2);
+        let first = &sections[0];
+        assert_eq!(first["label"], "Révisions");
+        assert_eq!(first["position"]["start_line"].as_u64(), Some(0));
+        assert_eq!(first["position"]["start_col"].as_u64(), Some(5));
+        assert_eq!(
+            first["position"]["end_col"].as_u64(),
+            Some(5 + "Révisions".len() as u64)
+        );
+        let equals: serde_json::Value =
+            serde_json::from_str(&parse_asciidoc("== =\n")).unwrap();
+        assert_eq!(equals["children"][0]["label"], "=");
+        assert_eq!(equals["children"][0]["position"]["start_col"], 3);
+        assert_eq!(equals["children"][0]["position"]["end_col"], 4);
+
+        let second = &sections[1];
+        assert_eq!(second["label"], "Service Guide");
+        assert_eq!(second["position"]["start_line"].as_u64(), Some(1));
+        assert_eq!(second["position"]["start_col"].as_u64(), Some(2));
+        assert_eq!(
+            second["position"]["end_col"].as_u64(),
+            Some(2 + "Service Guide".len() as u64)
+        );
+    }
+
 }
